@@ -1,0 +1,107 @@
+﻿Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+
+'Customer: ELMET
+'hooks: 15850, 16512
+'Nov 2021 - Nam Le
+
+'this GAB script to be attached to the Script 1 on the process screen of the GUI and WIP to FG screen. When the user clicks the button to create the cert, the script
+'will look at the part being created, then check for the "logical tie" to determine which template PDF to
+'use. The script will then use the work order data to populate the fillable PDF, save it as a new file, and
+'display the new file to the screen.
+'If the script does not find a "logical tie" for the part being created, a screen will popup with a drop down
+'list of the available PDF templates to use.
+
+Program.Sub.Main.Start
+f.Intrinsic.Control.Try
+	v.Local.sFile.Declare(String)
+	v.Local.sFileSave.Declare(String)
+	v.Local.bTempExist.Declare(Boolean)
+	v.Local.sJob.Declare(String)
+	v.Local.sSuffix.Declare(String)
+	v.Local.sSQL.Declare(String)
+	v.Local.sRet.Declare(String)
+	v.Local.sCertCode.Declare(String)
+	v.Local.sPart.Declare(String)
+	v.Local.sDate.Declare(String)
+	v.Local.sCustomer.Declare(String)
+	v.Local.sSO.Declare(String)
+	v.Local.sCustPO.Declare(String)
+	v.Local.sSize.Declare(String)
+	v.Local.sCustPart.Declare(String)
+	v.Local.lQty.Declare(String)
+	v.Local.sMat_Lot.Declare(String)
+	v.Local.sTemplateName.Declare(String)
+	v.Local.sFields.Declare(String)
+	v.Local.sFieldVals.Declare(String)
+	
+	#Region "get JOB and SEQ"
+	f.Intrinsic.Control.If(v.Caller.Hook,=,"15850")
+		v.Local.sJob.Set(v.Passed.009990)
+		v.Local.sSuffix.Set(v.Passed.009991)
+		v.Local.lQty.Set(v.Passed.000001)
+	f.Intrinsic.Control.ElseIf(v.Caller.Hook,=,"16512")
+		v.Local.sJob.Set(v.Passed.000003)
+		v.Local.sSuffix.Set(v.Passed.000004)
+		v.Local.lQty.Set(v.Passed.000013)
+	f.Intrinsic.Control.EndIf
+	
+	#End Region
+		
+	
+	'gather info
+	f.Intrinsic.String.Build("select top 1 RTRIM(J.PART) PART, RTRIM(J.SALES_ORDER)+'-'+RTRIM(SALES_ORDER_LINE)+'0' SO, RTRIM(O.CUSTOMER_PO) CUSTPO, RTRIM(C.NAME_CUSTOMER) CUSTOMER , RTRIM(P.CUSTOMER_PART) CUSTPART, I2.LENGTH, I2.WIDTH, RTRIM(I2.DESCRIPTION_2), CM.TEMP_NAME, RTRIM(IM.HEAT) from V_JOB_HEADER J left join V_ORDER_HEADER O on RTRIM(O.ORDER_NO) = RTRIM(J.SALES_ORDER) left join V_CUSTOMER_MASTER C on RTRIM(C.CUSTOMER) = RTRIM(J.CUSTOMER) left join V_INV_CROSS_REF P on RTRIM(P.CUSTOMER) = RTRIM(J.CUSTOMER) and RTRIM(P.PART) = RTRIM(J.PART) left join V_INVENTORY_MST2 I2 on RTRIM(I2.PART) = RTRIM(J.PART) left join GCG_6535_CERT_MASTER CM on RTRIM(CM.CERT_CODE) = RTRIM(I2.DESCRIPTION_2) left join V_ITEM_MASTER IM on RTRIM(IM.PART) = RTRIM(J.PART) where RTRIM(J.JOB)='{0}' and RTRIM(J.SUFFIX)='{1}'", v.Local.sJob, v.Local.sSuffix, v.Local.sSQL)
+	
+	f.ODBC.Connection!Con.OpenCompanyConnection
+		f.ODBC.Connection!Con.ExecuteAndReturn(v.Local.sSQL, v.Local.sRet)
+		f.Intrinsic.Control.If(v.Ambient.ExecuteAndReturnEOF,=,False)
+			f.Intrinsic.String.Split(v.Local.sRet, "*!*", v.Local.sRet)
+			v.Local.sPart.Set(v.Local.sRet(0))
+			v.Local.sSO.Set(v.Local.sRet(1))
+			v.Local.sCustPO.Set(v.Local.sRet(2))
+			v.Local.sCustomer.Set(v.Local.sRet(3))
+			v.Local.sCustPart.Set(v.Local.sRet(4))
+			f.Intrinsic.String.Build("{0}x{1}", v.Local.sRet(5), v.Local.sRet(6), v.Local.sSize)
+			v.Local.sCertCode.Set(v.Local.sRet(7))
+			v.Local.sTemplateName.Set(v.Local.sRet(8))
+			v.Local.sMat_Lot.Set(v.Local.sRet(9))
+			'Material Lot?
+			'find matching template
+		
+			f.Intrinsic.Control.If(v.Local.sTemplateName,=,"")
+			'if not, popup window to choose template
+				v.Local.sSQL.Set("select RTRIM(CERT_CODE) CODE, RTRIM(TEMP_NAME) TEMPLATE from GCG_6535_CERT_MASTER")
+				f.Intrinsic.UI.SetBrowserHotTypeAhead(true)
+				f.Intrinsic.UI.Browser("Template", "Con", V.Local.sSQL, "CODE*!*TEMPLATE", "60*!*140", V.Local.sRet)
+			
+				f.Intrinsic.Control.If(V.Local.sRet, <>, "***CANCEL***")
+					f.Intrinsic.String.Split(V.Local.sRet, "*!*", v.Local.sRet)
+					v.Local.sTemplateName.Set(v.Local.sRet(1))
+				f.Intrinsic.Control.EndIf
+			f.Intrinsic.Control.EndIf
+			
+			'print
+			f.Intrinsic.String.Build("{0}\{1}\{2}.pdf", v.Caller.FilesDir, "6535\Cert Templates", v.Local.sTemplateName, v.Local.sFile)
+			f.Intrinsic.String.Build("{0}\{1}\{2}{3}{4}.pdf", v.Caller.FilesDir, "6535\temp", v.Local.sTemplateName, v.Caller.User, v.Ambient.Now.FormatYYYY-MM-DD-HH-NN-SS, v.Local.sFileSave)
+			
+			f.Intrinsic.String.Build("{0}*!*{1}*!*{2}*!*{3}*!*{4}*!*{5}*!*{6}*!*{7}*!*{8}", v.Local.sPart, v.Ambient.Now.FormatMM/DD/YYYY, v.Local.sCustomer, v.Local.sSO, v.Local.sCustPO, v.Local.sSize, v.Local.sCustPart, v.Local.lQty, v.Local.sMat_Lot, v.Local.sFieldVals)
+			v.Local.sFields.Set("ITEM*!*DATE*!*CUSTOMER*!*SO*!*CUSTOMER_PO*!*SIZE*!*CUST_PART*!*QUANTITY*!*MATERIAL_LOT")
+			
+			Function.Automation.PDF.Open("MyPDF",v.Local.sFile)
+			Function.Automation.PDF.SetFormFields("MyPDF", v.Local.sFileSave, v.Local.sFields, v.Local.sFieldVals, True)
+			F.Intrinsic.Task.ShellExec(0,"",V.Local.sFileSave,"","",1)
+			Function.Automation.PDF.Close("MyPDF")
+			
+		f.Intrinsic.Control.EndIf
+	
+	f.ODBC.Connection!Con.Close
+
+f.Intrinsic.Control.Catch
+	f.Intrinsic.UI.Msgbox(v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.Comments.Start
+${$5$}$3.0.0.0$}$1
+${$6$}$nle$}$20211103183805915$}$kjzCRYkA6UEoRnCwndYnRe1KWJK4rBd4g6rC1riTEjEHzY+piy3QWNx/CxciWlHx
+Program.Sub.Comments.End
